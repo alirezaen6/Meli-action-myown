@@ -1,0 +1,56 @@
+name: Telegram Downloader via Telethon
+
+on:
+  workflow_dispatch:
+    inputs:
+      telegram_links:
+        description: 'لیست لینک‌های پیام‌های تلگرام (جداشده با فاصله)'
+        required: true
+      split_threshold_mb:
+        description: 'حداکثر حجم هر فایل برای تقسیم (MB)'
+        required: false
+        default: '0'
+      subfolder:
+        description: 'زیرپوشه برای ذخیرهٔ فایل‌ها'
+        required: false
+        default: ''
+      custom_filename:
+        description: 'پیشوند دلخواه برای نام فایل‌ها'
+        required: false
+        default: ''
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v3
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install telethon requests tqdm
+
+      - name: 🚀 Run Telethon downloader
+        env:
+          API_ID:           ${{ secrets.TELEGRAM_API_ID }}
+          API_HASH:         ${{ secrets.TELEGRAM_API_HASH }}
+          TELETHON_SESSION: ${{ secrets.TELETHON_SESSION }}
+          TEL_LINKS:        ${{ github.event.inputs.telegram_links }}
+          SPLIT_THRESH_MB:  ${{ github.event.inputs.split_threshold_mb }}
+          SUBFOLDER:        ${{ github.event.inputs.subfolder }}
+          CUSTOM_FILENAME:  ${{ github.event.inputs.custom_filename }}
+        run: |
+          python3 telegram_telethon_downloader.py
+
+      - name: 📂 Upload downloaded files
+        uses: actions/upload-artifact@v3
+        with:
+          name: telegram-downloads
+          path: downloads/
