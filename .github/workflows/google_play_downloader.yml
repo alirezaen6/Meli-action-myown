@@ -1,0 +1,145 @@
+name: دانلود فایل نصبی گوگل پلی
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_name:
+        description: 'Package name (e.g., com.google.android.youtube)'
+        required: true
+        type: string
+      architecture:
+        description: 'Target architecture'
+        required: true
+        type: choice
+        default: 'arm64'
+        options:
+          - arm64
+          - armv7
+      merge_splits:
+        description: 'Merge split APKs into single installable APK'
+        required: false
+        type: boolean
+        default: true
+      output_folder:
+        description: 'Output folder (relative to repo root)'
+        required: false
+        type: string
+        default: 'downloads'
+
+permissions:
+  contents: write
+
+jobs:
+  download-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Create output folder
+        run: mkdir -p "${{ inputs.output_folder }}"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-17-jre-headless apksigner python3 python3-venv python3-pip curl git
+
+      - name: Clone gplay-apk-downloader
+        run: |
+          git clone https://github.com/alltechdev/gplay-apk-downloader.git
+          cd gplay-apk-downloader
+          ./setup.sh
+
+      - name: Authenticate with Google Play
+        run: |
+          cd gplay-apk-downloader
+          echo "y" | ./gplay auth
+          echo "Authentication completed."
+
+      - name: Download APK
+        id: download
+        run: |
+          cd gplay-apk-downloader
+          ARCH="${{ inputs.architecture }}"
+          MERGE="${{ inputs.merge_splits }}"
+          OUTPUT_DIR="../${{ inputs.output_folder }}"
+          
+          CMD="./gplay download ${{ inputs.package_name }} -a $ARCH -o $OUTPUT_DIR"
+          if [ "$MERGE" = "true" ]; then
+            CMD="$CMD -m"
+          fi
+          
+          echo "Running: $CMD"
+          $CMD
+          
+          # Find downloaded file(s)
+          cd "$OUTPUT_DIR"
+          if [ "$MERGE" = "true" ]; then
+            DOWNLOADED_FILE=$(ls -1 *.apk 2>/dev/null | head -n1)
+          else
+            DOWNLOADED_FILE=$(ls -1 *.apk *.zip 2>/dev/null | head -n1)
+          fi
+          
+          if [ -z "$DOWNLOADED_FILE" ]; then
+            echo "Error: No file downloaded"
+            exit 1
+          fi
+          
+          echo "downloaded_file_path=$OUTPUT_DIR/$DOWNLOADED_FILE" >> $GITHUB_OUTPUT
+          echo "downloaded_file_name=$DOWNLOADED_FILE" >> $GITHUB_OUTPUT
+
+      - name: Generate timestamp for unique archive
+        id: timestamp
+        run: echo "value=$(date +%Y%m%d_%H%M%S)" >> $GITHUB_OUTPUT
+
+      - name: Create split archive (85MB chunks)
+        run: |
+          DOWNLOADED_FILE="${{ steps.download.outputs.downloaded_file_path }}"
+          TIMESTAMP="${{ steps.timestamp.outputs.value }}"
+          PACKAGE_NAME="${{ inputs.package_name }}"
+          ARCH="${{ inputs.architecture }}"
+          
+          # Create archive name
+          if [ "${{ inputs.merge_splits }}" = "true" ]; then
+            ARCHIVE_NAME="${PACKAGE_NAME}_${ARCH}_merged_${TIMESTAMP}"
+          else
+            ARCHIVE_NAME="${PACKAGE_NAME}_${ARCH}_splits_${TIMESTAMP}"
+          fi
+          
+          cd "${{ inputs.output_folder }}"
+          
+          # Compress and split the downloaded file(s)
+          if [ "${{ inputs.merge_splits }}" = "true" ]; then
+            # Single APK file - split into chunks
+            7z a -mx=3 -v85m "${ARCHIVE_NAME}.7z" "$(basename "$DOWNLOADED_FILE")"
+          else
+            # Multiple split files - use separate archive for each
+            mkdir -p "${ARCHIVE_NAME}_contents"
+            cp "$(basename "$DOWNLOADED_FILE")" "${ARCHIVE_NAME}_contents/"
+            7z a -mx=3 -v85m "${ARCHIVE_NAME}.7z" "${ARCHIVE_NAME}_contents/"
+          fi
+          
+          # Rename single-chunk archive to .7z
+          if [ -f "${ARCHIVE_NAME}.7z.001" ] && [ ! -f "${ARCHIVE_NAME}.7z.002" ]; then
+            mv "${ARCHIVE_NAME}.7z.001" "${ARCHIVE_NAME}.7z"
+          fi
+
+      - name: Remove original downloaded file(s)
+        run: |
+          DOWNLOADED_FILE="${{ steps.download.outputs.downloaded_file_path }}"
+          if [[ -n "$DOWNLOADED_FILE" && -f "$DOWNLOADED_FILE" ]]; then
+            rm "$DOWNLOADED_FILE"
+          fi
+          # Also remove any extracted directories
+          rm -rf "${{ inputs.output_folder }}"/*_contents/
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${{ inputs.output_folder }}/"
+          git commit -m "Download ${{ inputs.package_name }} (${{ inputs.architecture }}) from Google Play [skip ci]" || echo "No changes to commit"
+          git push
