@@ -1,23 +1,15 @@
-name: Telegram Downloader via Telethon
+name: Telegram Downloader via yt-dlp
 
 on:
   workflow_dispatch:
     inputs:
       telegram_links:
-        description: 'لیست لینک‌های پیام‌های تلگرام (جداشده با فاصله)'
+        description: 'لیست لینک‌های عمومی تلگرام (جدا شده با فاصله)، مثال: https://t.me/s/Channel/12345'
         required: true
-      split_threshold_mb:
-        description: 'حداکثر حجم هر فایل برای تقسیم (MB)'
-        required: false
-        default: '0'
-      subfolder:
-        description: 'زیرپوشه برای ذخیرهٔ فایل‌ها'
-        required: false
-        default: ''
-      custom_filename:
-        description: 'پیشوند دلخواه برای نام فایل‌ها'
-        required: false
-        default: ''
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
   download:
@@ -25,32 +17,50 @@ jobs:
 
     steps:
       - name: 📥 Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
 
-      - name: 🐍 Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: 📦 Install dependencies
+      - name: 🛠 Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install telethon requests tqdm
+          sudo apt update
+          sudo apt install -y ffmpeg zip
+          python3 -m pip install --upgrade yt-dlp
 
-      - name: 🚀 Run Telethon downloader
-        env:
-          API_ID:           ${{ secrets.TELEGRAM_API_ID }}
-          API_HASH:         ${{ secrets.TELEGRAM_API_HASH }}
-          TELETHON_SESSION: ${{ secrets.TELETHON_SESSION }}
-          TEL_LINKS:        ${{ github.event.inputs.telegram_links }}
-          SPLIT_THRESH_MB:  ${{ github.event.inputs.split_threshold_mb }}
-          SUBFOLDER:        ${{ github.event.inputs.subfolder }}
-          CUSTOM_FILENAME:  ${{ github.event.inputs.custom_filename }}
+      - name: 🚀 Download files with yt-dlp
         run: |
-          python3 telegram_telethon_downloader.py
+          mkdir -p downloads
+          # حلقه روی همه لینک‌ها
+          for LINK in ${{ github.event.inputs.telegram_links }}; do
+            yt-dlp \
+              --ignore-errors \
+              --no-playlist \
+              --no-overwrites \
+              --no-part \
+              -o "downloads/%(uploader)s_%(id)s_%(title)s.%(ext)s" \
+              "$LINK"
+          done
 
-      - name: 📂 Upload downloaded files
+      - name: 🔀 Sanitize filenames
+        run: |
+          cd downloads
+          for f in *; do
+            [ -e "$f" ] || continue
+            CLEAN=$(echo "$f" | sed 's/[^a-zA-Z0-9._-]/_/g')
+            [ "$f" = "$CLEAN" ] || mv -- "$f" "$CLEAN"
+          done
+
+      - name: 📂 Upload as Artifact
         uses: actions/upload-artifact@v3
         with:
           name: telegram-downloads
           path: downloads/
+
+      # (اختیاری) در صورت تمایل می‌توانید به جای آپلود آرتیفکت، 
+      # فایل‌ها را در خود repo کامیت کنید:
+      
+       - name: 📤 Commit & Push downloads
+         run: |
+           git config user.name "github-actions[bot]"
+           git config user.email "github-actions[bot]@users.noreply.github.com"
+           git add downloads/*
+           git commit -m "Add telegram downloads [skip ci]" || echo "No changes to commit"
+           git push
