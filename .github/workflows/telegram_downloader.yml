@@ -24,13 +24,13 @@ jobs:
           sudo apt update
           sudo apt install -y ffmpeg zip
           python3 -m pip install --upgrade yt-dlp
-
-      - name: 🚀 Download files with yt-dlp
+      
+      - name: 🚀 Download with yt-dlp (force IPv4)
         run: |
           mkdir -p downloads
-          # حلقه روی همه لینک‌ها
           for LINK in ${{ github.event.inputs.telegram_links }}; do
             yt-dlp \
+              --force-ipv4 \
               --ignore-errors \
               --no-playlist \
               --no-overwrites \
