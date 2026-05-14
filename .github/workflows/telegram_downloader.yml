@@ -18,17 +18,25 @@ jobs:
     steps:
       - name: 📥 Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: 🔍 Debug – show input links
+        run: |
+          echo ">>> telegram_links = '${{ github.event.inputs.telegram_links }}'"
 
       - name: 🛠 Install dependencies
         run: |
           sudo apt update
           sudo apt install -y ffmpeg zip
           python3 -m pip install --upgrade yt-dlp
-      
+
       - name: 🚀 Download with yt-dlp (force IPv4)
         run: |
           mkdir -p downloads
           for LINK in ${{ github.event.inputs.telegram_links }}; do
+            echo ">>>> Downloading: $LINK"
             yt-dlp \
               --force-ipv4 \
               --ignore-errors \
@@ -39,14 +47,10 @@ jobs:
               "$LINK"
           done
 
-      - name: 🔀 Sanitize filenames
+      - name: 🔍 Debug – list contents of downloads
         run: |
-          cd downloads
-          for f in *; do
-            [ -e "$f" ] || continue
-            CLEAN=$(echo "$f" | sed 's/[^a-zA-Z0-9._-]/_/g')
-            [ "$f" = "$CLEAN" ] || mv -- "$f" "$CLEAN"
-          done
+          echo ">>> ls -lha downloads"
+          ls -lha downloads || echo "downloads is empty or missing"
 
       - name: 📂 Upload as Artifact
         uses: actions/upload-artifact@v4
@@ -54,13 +58,20 @@ jobs:
           name: telegram-downloads
           path: downloads/
 
-      # (اختیاری) در صورت تمایل می‌توانید به جای آپلود آرتیفکت، 
-      # فایل‌ها را در خود repo کامیت کنید:
-      
-      - name: 📤 Commit & Push downloads
+      - name: 📤 Commit & Push downloads (if any)
         run: |
-           git config user.name "github-actions[bot]"
-           git config user.email "github-actions[bot]@users.noreply.github.com"
-           git add downloads/*
-           git commit -m "Add telegram downloads [skip ci]" || echo "No changes to commit"
-           git push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # پوشه‌ی downloads رو حتماً بساز
+          mkdir -p downloads
+
+          # اگر خالیه اسکیپ کن
+          if [ -z "$(ls -A downloads)" ]; then
+            echo "✅ هیچ فایل جدیدی برای commit وجود ندارد."
+            exit 0
+          fi
+
+          git add downloads
+          git commit -m "Add telegram downloads [skip ci]"
+          git push
